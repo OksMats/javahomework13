@@ -1,67 +1,74 @@
-import com.google.gson.Gson;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.client.methods.RequestBuilder;
+import org.apache.http.impl.client.HttpClients;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 public class JsonPlaceTask {
-    private static final String BASE_URL = "https://jsonplaceholder.typicode.com/users";
-    private static User createUser(User user) {
-        return sendRequest(BASE_URL, "POST", new Gson().toJson(user), User.class);
-    }
 
-    private static void updateUser(User user) {
-        sendRequest(BASE_URL + "/" + user.getId(), "PUT", new Gson().toJson(user), User.class);
-    }
+    private static final String BASE_URL = "https://jsonplaceholder.typicode.com";
 
-    private static void deleteUser(int userId) {
-        sendRequest(BASE_URL + "/" + userId, "DELETE", null, Void.class);
-    }
-
-    private static void getAllUsers() {
-        User[] users = sendRequest(BASE_URL, "GET", null, User[].class);
-        for (User user : users) {
-            System.out.println(user);
-        }
-    }
-
-    private static void getUserById(int userId) {
-        User user = sendRequest(BASE_URL + "/" + userId, "GET", null, User.class);
-        System.out.println("User by ID " + userId + ": " + user);
-    }
-
-    private static void getUserByUsername(String username) {
-        User[] users = sendRequest(BASE_URL + "?username=" + username, "GET", null, User[].class);
-        for (User user : users) {
-            System.out.println("User by username " + username + ": " + user);
-        }
-    }
-    private static void getAndSaveCommentsForLastPost(int userId) {
-        Map<String, Object>[] posts = sendRequest(BASE_URL + "/users/" + userId + "/posts", "GET", null, Map[].class);
-        Map<String, Object> lastPost = posts[posts.length - 1];
-        Map<String, Object>[] comments = sendRequest(BASE_URL + "/posts/" + lastPost.get("id") + "/comments", "GET", null, Map[].class);
-        String fileName = "user-" + userId + "-post-" + lastPost.get("id") + "-comments.json";
-        try (FileWriter fileWriter = new FileWriter(fileName)) {
-            new Gson().toJson(comments, fileWriter);
-            System.out.println("Comments saved to file: " + fileName);
-        }
-    }
-    private static void getOpenTasksForUser(int userId) {
+    private static List<Map<String, Object>> sendRequest(String endpoint, String method, Map<String, Object> data) {
         try {
-            Map<String, Object>[] todos = sendRequest(BASE_URL + "/users/" + userId + "/todos", "GET", null, Map[].class);
+            HttpClient httpClient = HttpClients.createDefault();
+            HttpUriRequest request = buildRequest(endpoint, method, data);
 
-            System.out.println("Open tasks for user " + userId + ":");
-            for (Map<String, Object> todo : todos) {
-                boolean completed = (boolean) todo.get("completed");
-                if (!completed) {
-                    System.out.println("Task: " + todo.get("title"));
-                }
+            HttpResponse response = httpClient.execute(request);
+            int statusCode = response.getStatusLine().getStatusCode();
+
+            if (statusCode >= 200 && statusCode < 300) {
+                return readResponse(response);
+            } else {
+                System.out.println("Request failed. HTTP Response Code: " + statusCode);
+                return Collections.emptyList();
             }
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return Collections.emptyList();
         }
     }
 
+    private static HttpUriRequest buildRequest(String endpoint, String method, Map<String, Object> data) {
+        RequestBuilder requestBuilder = RequestBuilder.create(method)
+                .setUri(BASE_URL + endpoint)
+                .addHeader("Content-Type", "application/json");
+
+        if (data != null) {
+            requestBuilder.setEntity(mapToJsonString(data));
+        }
+
+        return requestBuilder.build();
+    }
+
+    private static List<Map<String, Object>> readResponse(HttpResponse response) throws IOException {
+        String responseBody = new String(response.getEntity().getContent().readAllBytes(), StandardCharsets.UTF_8);
+        return parseJsonArray(responseBody);
+    }
+
+    private static List<Map<String, Object>> parseJsonArray(String jsonArray) {
+        JSONArray jsonArr = new JSONArray(jsonArray);
+        return StreamSupport.stream(jsonArr.spliterator(), false)
+                .map(JsonPlaceTask::parseJsonObject)
+                .collect(Collectors.toList());
+    }
+
+    private static Map<String, Object> parseJsonObject(Object jsonObject) {
+        JSONObject jsonObj = (JSONObject) jsonObject;
+        return jsonObj.toMap();
+    }
+
+    private static StringEntity mapToJsonString(Map<String, Object> data) {
+        JSONObject jsonObj = new JSONObject(data);
+        return new StringEntity(jsonObj.toString(), ContentType.APPLICATION_JSON);
+    }
 }
